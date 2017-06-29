@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yosuke-furukawa/json5/encoding/json5"
 	"github.com/zyedidia/glob"
+	"github.com/zyedidia/json5/encoding/json5"
 )
 
 type optionValidator func(string, interface{}) error
@@ -175,22 +175,36 @@ func GetOption(name string) interface{} {
 // Note that colorscheme is a global only option
 func DefaultGlobalSettings() map[string]interface{} {
 	return map[string]interface{}{
-		"autoindent":   true,
-		"colorcolumn":  float64(0),
-		"colorscheme":  "zenburn",
-		"cursorline":   true,
-		"ignorecase":   false,
-		"indentchar":   " ",
-		"infobar":      true,
-		"ruler":        true,
-		"savecursor":   false,
-		"saveundo":     false,
-		"scrollspeed":  float64(2),
-		"scrollmargin": float64(3),
-		"statusline":   true,
-		"syntax":       true,
-		"tabsize":      float64(4),
-		"tabstospaces": false,
+		"autoindent":     true,
+		"keepautoindent": false,
+		"autosave":       false,
+		"colorcolumn":    float64(0),
+		"colorscheme":    "default",
+		"cursorline":     true,
+		"eofnewline":     false,
+		"rmtrailingws":   false,
+		"ignorecase":     false,
+		"indentchar":     " ",
+		"infobar":        true,
+		"ruler":          true,
+		"savecursor":     false,
+		"saveundo":       false,
+		"scrollspeed":    float64(2),
+		"scrollmargin":   float64(3),
+		"softwrap":       false,
+		"splitRight":     true,
+		"splitBottom":    true,
+		"statusline":     true,
+		"syntax":         true,
+		"tabmovement":    false,
+		"tabsize":        float64(4),
+		"tabstospaces":   false,
+		"termtitle":      false,
+		"pluginchannels": []string{
+			"https://raw.githubusercontent.com/micro-editor/plugin-channel/master/channel.json",
+		},
+		"pluginrepos": []string{},
+		"useprimary":  true,
 	}
 }
 
@@ -198,21 +212,30 @@ func DefaultGlobalSettings() map[string]interface{} {
 // Note that filetype is a local only option
 func DefaultLocalSettings() map[string]interface{} {
 	return map[string]interface{}{
-		"autoindent":   true,
-		"colorcolumn":  float64(0),
-		"cursorline":   true,
-		"filetype":     "Unknown",
-		"ignorecase":   false,
-		"indentchar":   " ",
-		"ruler":        true,
-		"savecursor":   false,
-		"saveundo":     false,
-		"scrollspeed":  float64(2),
-		"scrollmargin": float64(3),
-		"statusline":   true,
-		"syntax":       true,
-		"tabsize":      float64(4),
-		"tabstospaces": false,
+		"autoindent":     true,
+		"keepautoindent": false,
+		"autosave":       false,
+		"colorcolumn":    float64(0),
+		"cursorline":     true,
+		"eofnewline":     false,
+		"rmtrailingws":   false,
+		"filetype":       "Unknown",
+		"ignorecase":     false,
+		"indentchar":     " ",
+		"ruler":          true,
+		"savecursor":     false,
+		"saveundo":       false,
+		"scrollspeed":    float64(2),
+		"scrollmargin":   float64(3),
+		"softwrap":       false,
+		"splitRight":     true,
+		"splitBottom":    true,
+		"statusline":     true,
+		"syntax":         true,
+		"tabmovement":    false,
+		"tabsize":        float64(4),
+		"tabstospaces":   false,
+		"useprimary":     true,
 	}
 }
 
@@ -257,13 +280,11 @@ func SetOption(option, value string) error {
 	globalSettings[option] = nativeValue
 
 	if option == "colorscheme" {
-		LoadSyntaxFiles()
+		// LoadSyntaxFiles()
+		InitColorscheme()
 		for _, tab := range tabs {
 			for _, view := range tab.views {
 				view.Buf.UpdateRules()
-				if view.Buf.Settings["syntax"].(bool) {
-					view.matches = Match(view)
-				}
 			}
 		}
 	}
@@ -321,16 +342,19 @@ func SetLocalOption(option, value string, view *View) error {
 
 	if option == "statusline" {
 		view.ToggleStatusLine()
-		if buf.Settings["syntax"].(bool) {
-			view.matches = Match(view)
-		}
 	}
 
 	if option == "filetype" {
-		LoadSyntaxFiles()
+		// LoadSyntaxFiles()
+		InitColorscheme()
 		buf.UpdateRules()
-		if buf.Settings["syntax"].(bool) {
-			view.matches = Match(view)
+	}
+
+	if option == "syntax" {
+		if !nativeValue.(bool) {
+			buf.ClearMatches()
+		} else {
+			buf.highlighter.HighlightStates(buf)
 		}
 	}
 

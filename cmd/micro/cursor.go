@@ -1,6 +1,8 @@
 package main
 
-import "github.com/zyedidia/clipboard"
+import (
+	"github.com/zyedidia/clipboard"
+)
 
 // The Cursor struct stores the location of the cursor in the view
 // The complicated part about the cursor is storing its location.
@@ -21,12 +23,24 @@ type Cursor struct {
 	// This is used for line and word selection where it is necessary
 	// to know what the original selection was
 	OrigSelection [2]Loc
+
+	// Which cursor index is this (for multiple cursors)
+	Num int
 }
 
 // Goto puts the cursor at the given cursor's location and gives the current cursor its selection too
 func (c *Cursor) Goto(b Cursor) {
 	c.X, c.Y, c.LastVisualX = b.X, b.Y, b.LastVisualX
 	c.OrigSelection, c.CurSelection = b.OrigSelection, b.CurSelection
+}
+
+// CopySelection copies the user's selection to either "primary" or "clipboard"
+func (c *Cursor) CopySelection(target string) {
+	if c.HasSelection() {
+		if target != "primary" || c.buf.Settings["useprimary"].(bool) {
+			clipboard.WriteAll(c.GetSelection(), target)
+		}
+	}
 }
 
 // ResetSelection resets the user's selection
@@ -38,19 +52,11 @@ func (c *Cursor) ResetSelection() {
 // SetSelectionStart sets the start of the selection
 func (c *Cursor) SetSelectionStart(pos Loc) {
 	c.CurSelection[0] = pos
-	// Copy to primary clipboard for linux
-	if c.HasSelection() {
-		clipboard.WriteAll(c.GetSelection(), "primary")
-	}
 }
 
 // SetSelectionEnd sets the end of the selection
 func (c *Cursor) SetSelectionEnd(pos Loc) {
 	c.CurSelection[1] = pos
-	// Copy to primary clipboard for linux
-	if c.HasSelection() {
-		clipboard.WriteAll(c.GetSelection(), "primary")
-	}
 }
 
 // HasSelection returns whether or not the user has selected anything
@@ -73,10 +79,13 @@ func (c *Cursor) DeleteSelection() {
 
 // GetSelection returns the cursor's selection
 func (c *Cursor) GetSelection() string {
-	if c.CurSelection[0].GreaterThan(c.CurSelection[1]) {
-		return c.buf.Substr(c.CurSelection[1], c.CurSelection[0])
+	if InBounds(c.CurSelection[0], c.buf) && InBounds(c.CurSelection[1], c.buf) {
+		if c.CurSelection[0].GreaterThan(c.CurSelection[1]) {
+			return c.buf.Substr(c.CurSelection[1], c.CurSelection[0])
+		}
+		return c.buf.Substr(c.CurSelection[0], c.CurSelection[1])
 	}
-	return c.buf.Substr(c.CurSelection[0], c.CurSelection[1])
+	return ""
 }
 
 // SelectLine selects the current line
@@ -330,6 +339,14 @@ func (c *Cursor) GetCharPosInLine(lineNum, visualPos int) int {
 func (c *Cursor) GetVisualX() int {
 	runes := []rune(c.buf.Line(c.Y))
 	tabSize := int(c.buf.Settings["tabsize"].(float64))
+	if c.X > len(runes) {
+		c.X = len(runes) - 1
+	}
+
+	if c.X < 0 {
+		c.X = 0
+	}
+
 	return StringWidth(string(runes[:c.X]), tabSize)
 }
 

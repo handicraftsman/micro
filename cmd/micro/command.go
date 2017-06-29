@@ -2,22 +2,28 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 
+	humanize "github.com/dustin/go-humanize"
 	"github.com/mitchellh/go-homedir"
 )
 
+// A Command contains a action (a function to call) as well as information about how to autocomplete the command
 type Command struct {
 	action      func([]string)
 	completions []Completion
 }
 
+// A StrCommand is similar to a command but keeps the name of the action
 type StrCommand struct {
 	action      string
 	completions []Completion
@@ -25,20 +31,33 @@ type StrCommand struct {
 
 var commands map[string]Command
 
-var commandActions = map[string]func([]string){
-	"Set":      Set,
-	"SetLocal": SetLocal,
-	"Show":     Show,
-	"Run":      Run,
-	"Bind":     Bind,
-	"Quit":     Quit,
-	"Save":     Save,
-	"Replace":  Replace,
-	"VSplit":   VSplit,
-	"HSplit":   HSplit,
-	"Tab":      NewTab,
-	"Help":     Help,
-	"Eval":     Eval,
+var commandActions map[string]func([]string)
+
+func init() {
+	commandActions = map[string]func([]string){
+		"Set":        Set,
+		"SetLocal":   SetLocal,
+		"Show":       Show,
+		"Run":        Run,
+		"Bind":       Bind,
+		"Quit":       Quit,
+		"Save":       Save,
+		"Replace":    Replace,
+		"ReplaceAll": ReplaceAll,
+		"VSplit":     VSplit,
+		"HSplit":     HSplit,
+		"Tab":        NewTab,
+		"Help":       Help,
+		"Eval":       Eval,
+		"ToggleLog":  ToggleLog,
+		"Plugin":     PluginCmd,
+		"Reload":     Reload,
+		"Cd":         Cd,
+		"Pwd":        Pwd,
+		"Open":       Open,
+		"TabSwitch":  TabSwitch,
+		"MemUsage":   MemUsage,
+	}
 }
 
 // InitCommands initializes the default commands
@@ -71,20 +90,217 @@ func MakeCommand(name, function string, completions ...Completion) {
 // DefaultCommands returns a map containing micro's default commands
 func DefaultCommands() map[string]StrCommand {
 	return map[string]StrCommand{
-		"set":      {"Set", []Completion{OptionCompletion, NoCompletion}},
-		"setlocal": {"SetLocal", []Completion{OptionCompletion, NoCompletion}},
-		"show":     {"Show", []Completion{OptionCompletion, NoCompletion}},
-		"bind":     {"Bind", []Completion{NoCompletion}},
-		"run":      {"Run", []Completion{NoCompletion}},
-		"quit":     {"Quit", []Completion{NoCompletion}},
-		"save":     {"Save", []Completion{NoCompletion}},
-		"replace":  {"Replace", []Completion{NoCompletion}},
-		"vsplit":   {"VSplit", []Completion{FileCompletion, NoCompletion}},
-		"hsplit":   {"HSplit", []Completion{FileCompletion, NoCompletion}},
-		"tab":      {"Tab", []Completion{FileCompletion, NoCompletion}},
-		"help":     {"Help", []Completion{HelpCompletion, NoCompletion}},
-		"eval":     {"Eval", []Completion{NoCompletion}},
+		"set":        {"Set", []Completion{OptionCompletion, NoCompletion}},
+		"setlocal":   {"SetLocal", []Completion{OptionCompletion, NoCompletion}},
+		"show":       {"Show", []Completion{OptionCompletion, NoCompletion}},
+		"bind":       {"Bind", []Completion{NoCompletion}},
+		"run":        {"Run", []Completion{NoCompletion}},
+		"quit":       {"Quit", []Completion{NoCompletion}},
+		"save":       {"Save", []Completion{NoCompletion}},
+		"replace":    {"Replace", []Completion{NoCompletion}},
+		"replaceall": {"ReplaceAll", []Completion{NoCompletion}},
+		"vsplit":     {"VSplit", []Completion{FileCompletion, NoCompletion}},
+		"hsplit":     {"HSplit", []Completion{FileCompletion, NoCompletion}},
+		"tab":        {"Tab", []Completion{FileCompletion, NoCompletion}},
+		"help":       {"Help", []Completion{HelpCompletion, NoCompletion}},
+		"eval":       {"Eval", []Completion{NoCompletion}},
+		"log":        {"ToggleLog", []Completion{NoCompletion}},
+		"plugin":     {"Plugin", []Completion{PluginCmdCompletion, PluginNameCompletion}},
+		"reload":     {"Reload", []Completion{NoCompletion}},
+		"cd":         {"Cd", []Completion{FileCompletion}},
+		"pwd":        {"Pwd", []Completion{NoCompletion}},
+		"open":       {"Open", []Completion{FileCompletion}},
+		"tabswitch":  {"TabSwitch", []Completion{NoCompletion}},
+		"memusage":   {"MemUsage", []Completion{NoCompletion}},
 	}
+}
+
+// PluginCmd installs, removes, updates, lists, or searches for given plugins
+func PluginCmd(args []string) {
+	if len(args) >= 1 {
+		switch args[0] {
+		case "install":
+			installedVersions := GetInstalledVersions(false)
+			for _, plugin := range args[1:] {
+				pp := GetAllPluginPackages().Get(plugin)
+				if pp == nil {
+					messenger.Error("Unknown plugin \"" + plugin + "\"")
+				} else if err := pp.IsInstallable(); err != nil {
+					messenger.Error("Error installing ", plugin, ": ", err)
+				} else {
+					for _, installed := range installedVersions {
+						if pp.Name == installed.pack.Name {
+							if pp.Versions[0].Version.Compare(installed.Version) == 1 {
+								messenger.Error(pp.Name, " is already installed but out-of-date: use 'plugin update ", pp.Name, "' to update")
+							} else {
+								messenger.Error(pp.Name, " is already installed")
+							}
+						}
+					}
+					pp.Install()
+				}
+			}
+		case "remove":
+			removed := ""
+			for _, plugin := range args[1:] {
+				// check if the plugin exists.
+				if _, ok := loadedPlugins[plugin]; ok {
+					UninstallPlugin(plugin)
+					removed += plugin + " "
+					continue
+				}
+			}
+			if !IsSpaces(removed) {
+				messenger.Message("Removed ", removed)
+			} else {
+				messenger.Error("The requested plugins do not exist")
+			}
+		case "update":
+			UpdatePlugins(args[1:])
+		case "list":
+			plugins := GetInstalledVersions(false)
+			messenger.AddLog("----------------")
+			messenger.AddLog("The following plugins are currently installed:\n")
+			for _, p := range plugins {
+				messenger.AddLog(fmt.Sprintf("%s (%s)", p.pack.Name, p.Version))
+			}
+			messenger.AddLog("----------------")
+			if len(plugins) > 0 {
+				if CurView().Type != vtLog {
+					ToggleLog([]string{})
+				}
+			}
+		case "search":
+			plugins := SearchPlugin(args[1:])
+			messenger.Message(len(plugins), " plugins found")
+			for _, p := range plugins {
+				messenger.AddLog("----------------")
+				messenger.AddLog(p.String())
+			}
+			messenger.AddLog("----------------")
+			if len(plugins) > 0 {
+				if CurView().Type != vtLog {
+					ToggleLog([]string{})
+				}
+			}
+		case "available":
+			packages := GetAllPluginPackages()
+			messenger.AddLog("Available Plugins:")
+			for _, pkg := range packages {
+				messenger.AddLog(pkg.Name)
+			}
+			if CurView().Type != vtLog {
+				ToggleLog([]string{})
+			}
+		}
+	} else {
+		messenger.Error("Not enough arguments")
+	}
+}
+
+// TabSwitch switches to a given tab either by name or by number
+func TabSwitch(args []string) {
+	if len(args) > 0 {
+		num, err := strconv.Atoi(args[0])
+		if err != nil {
+			// Check for tab with this name
+
+			found := false
+			for _, t := range tabs {
+				v := t.views[t.CurView]
+				if v.Buf.GetName() == args[0] {
+					curTab = v.TabNum
+					found = true
+				}
+			}
+			if !found {
+				messenger.Error("Could not find tab: ", err)
+			}
+		} else {
+			num--
+			if num >= 0 && num < len(tabs) {
+				curTab = num
+			} else {
+				messenger.Error("Invalid tab index")
+			}
+		}
+	}
+}
+
+// Cd changes the current working directory
+func Cd(args []string) {
+	if len(args) > 0 {
+		home, _ := homedir.Dir()
+		path := strings.Replace(args[0], "~", home, 1)
+		os.Chdir(path)
+		for _, tab := range tabs {
+			for _, view := range tab.views {
+				wd, _ := os.Getwd()
+				view.Buf.Path, _ = MakeRelative(view.Buf.AbsPath, wd)
+				if p, _ := filepath.Abs(view.Buf.Path); !strings.Contains(p, wd) {
+					view.Buf.Path = view.Buf.AbsPath
+				}
+			}
+		}
+	}
+}
+
+// MemUsage prints micro's memory usage
+// Alloc shows how many bytes are currently in use
+// Sys shows how many bytes have been requested from the operating system
+// NumGC shows how many times the GC has been run
+// Note that Go commonly reserves more memory from the OS than is currently in-use/required
+// Additionally, even if Go returns memory to the OS, the OS does not always claim it because
+// there may be plenty of memory to spare
+func MemUsage(args []string) {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	messenger.Message(fmt.Sprintf("Alloc: %v, Sys: %v, NumGC: %v", humanize.Bytes(mem.Alloc), humanize.Bytes(mem.Sys), mem.NumGC))
+}
+
+// Pwd prints the current working directory
+func Pwd(args []string) {
+	wd, err := os.Getwd()
+	if err != nil {
+		messenger.Message(err.Error())
+	} else {
+		messenger.Message(wd)
+	}
+}
+
+// Open opens a new buffer with a given filename
+func Open(args []string) {
+	if len(args) > 0 {
+		filename := args[0]
+		// the filename might or might not be quoted, so unquote first then join the strings.
+		filename = strings.Join(SplitCommandArgs(filename), " ")
+
+		CurView().Open(filename)
+	} else {
+		messenger.Error("No filename")
+	}
+}
+
+// ToggleLog toggles the log view
+func ToggleLog(args []string) {
+	buffer := messenger.getBuffer()
+	if CurView().Type != vtLog {
+		CurView().HSplit(buffer)
+		CurView().Type = vtLog
+		RedrawAll()
+		buffer.Cursor.Loc = buffer.Start()
+		CurView().Relocate()
+		buffer.Cursor.Loc = buffer.End()
+		CurView().Relocate()
+	} else {
+		CurView().Quit(true)
+	}
+}
+
+// Reload reloads all files (syntax files, colorschemes...)
+func Reload(args []string) {
+	LoadAll()
 }
 
 // Help tries to open the given help page in a horizontal split
@@ -94,7 +310,7 @@ func Help(args []string) {
 		CurView().openHelp("help")
 	} else {
 		helpPage := args[0]
-		if _, ok := helpPages[helpPage]; ok {
+		if FindRuntimeFile(RTHelp, helpPage) != nil {
 			CurView().openHelp(helpPage)
 		} else {
 			messenger.Error("Sorry, no help for ", helpPage)
@@ -106,19 +322,27 @@ func Help(args []string) {
 // If no file is given, it opens an empty buffer in a new split
 func VSplit(args []string) {
 	if len(args) == 0 {
-		CurView().VSplit(NewBuffer([]byte{}, ""))
+		CurView().VSplit(NewBufferFromString("", ""))
 	} else {
 		filename := args[0]
 		home, _ := homedir.Dir()
 		filename = strings.Replace(filename, "~", home, 1)
-		file, err := ioutil.ReadFile(filename)
+		file, err := os.Open(filename)
+		fileInfo, _ := os.Stat(filename)
+
+		if err == nil && fileInfo.IsDir() {
+			messenger.Error(filename, " is a directory")
+			return
+		}
+
+		defer file.Close()
 
 		var buf *Buffer
 		if err != nil {
 			// File does not exist -- create an empty buffer with that name
-			buf = NewBuffer([]byte{}, filename)
+			buf = NewBufferFromString("", filename)
 		} else {
-			buf = NewBuffer(file, filename)
+			buf = NewBuffer(file, FSize(file), filename)
 		}
 		CurView().VSplit(buf)
 	}
@@ -128,19 +352,27 @@ func VSplit(args []string) {
 // If no file is given, it opens an empty buffer in a new split
 func HSplit(args []string) {
 	if len(args) == 0 {
-		CurView().HSplit(NewBuffer([]byte{}, ""))
+		CurView().HSplit(NewBufferFromString("", ""))
 	} else {
 		filename := args[0]
 		home, _ := homedir.Dir()
 		filename = strings.Replace(filename, "~", home, 1)
-		file, err := ioutil.ReadFile(filename)
+		file, err := os.Open(filename)
+		fileInfo, _ := os.Stat(filename)
+
+		if err == nil && fileInfo.IsDir() {
+			messenger.Error(filename, " is a directory")
+			return
+		}
+
+		defer file.Close()
 
 		var buf *Buffer
 		if err != nil {
 			// File does not exist -- create an empty buffer with that name
-			buf = NewBuffer([]byte{}, filename)
+			buf = NewBufferFromString("", filename)
 		} else {
-			buf = NewBuffer(file, filename)
+			buf = NewBuffer(file, FSize(file), filename)
 		}
 		CurView().HSplit(buf)
 	}
@@ -166,12 +398,27 @@ func NewTab(args []string) {
 		filename := args[0]
 		home, _ := homedir.Dir()
 		filename = strings.Replace(filename, "~", home, 1)
-		file, _ := ioutil.ReadFile(filename)
+		file, err := os.Open(filename)
+		fileInfo, _ := os.Stat(filename)
 
-		tab := NewTabFromView(NewView(NewBuffer(file, filename)))
+		if err == nil && fileInfo.IsDir() {
+			messenger.Error(filename, " is a directory")
+			return
+		}
+
+		defer file.Close()
+
+		var buf *Buffer
+		if err != nil {
+			buf = NewBufferFromString("", filename)
+		} else {
+			buf = NewBuffer(file, FSize(file), filename)
+		}
+
+		tab := NewTabFromView(NewView(buf))
 		tab.SetNum(len(tabs))
 		tabs = append(tabs, tab)
-		curTab++
+		curTab = len(tabs) - 1
 		if len(tabs) == 2 {
 			for _, t := range tabs {
 				for _, v := range t.views {
@@ -189,8 +436,8 @@ func Set(args []string) {
 		return
 	}
 
-	option := strings.TrimSpace(args[0])
-	value := strings.TrimSpace(args[1])
+	option := args[0]
+	value := args[1]
 
 	SetOptionAndSettings(option, value)
 }
@@ -202,8 +449,8 @@ func SetLocal(args []string) {
 		return
 	}
 
-	option := strings.TrimSpace(args[0])
-	value := strings.TrimSpace(args[1])
+	option := args[0]
+	value := args[1]
 
 	err := SetLocalOption(option, value, CurView())
 	if err != nil {
@@ -261,22 +508,27 @@ func Save(args []string) {
 
 // Replace runs search and replace
 func Replace(args []string) {
-	if len(args) < 2 {
+	if len(args) < 2 || len(args) > 3 {
 		// We need to find both a search and replace expression
 		messenger.Error("Invalid replace statement: " + strings.Join(args, " "))
 		return
 	}
 
-	var flags string
+	allAtOnce := false
 	if len(args) == 3 {
-		// The user included some flags
-		flags = args[2]
+		// user added -a flag
+		if args[2] == "-a" {
+			allAtOnce = true
+		} else {
+			messenger.Error("Invalid replace flag: " + args[2])
+			return
+		}
 	}
 
 	search := string(args[0])
 	replace := string(args[1])
 
-	regex, err := regexp.Compile(search)
+	regex, err := regexp.Compile("(?m)" + search)
 	if err != nil {
 		// There was an error with the user's regex
 		messenger.Error(err.Error())
@@ -286,7 +538,28 @@ func Replace(args []string) {
 	view := CurView()
 
 	found := 0
-	if strings.Contains(flags, "c") {
+	if allAtOnce {
+		// var deltas []Delta
+		for i := 0; i < view.Buf.LinesNum(); i++ {
+			// view.Buf.lines[i].data = regex.ReplaceAll(view.Buf.lines[i].data, []byte(replace))
+			for {
+				m := regex.FindIndex(view.Buf.lines[i].data)
+
+				if m != nil {
+					from := Loc{m[0], i}
+					to := Loc{m[1], i}
+
+					// deltas = append(deltas, Delta{replace, from, to})
+					view.Buf.Replace(from, to, replace)
+					found++
+				} else {
+					break
+				}
+			}
+		}
+		// view.Buf.MultipleReplace(deltas)
+
+	} else {
 		for {
 			// The 'check' flag was used
 			Search(search, view, true)
@@ -294,9 +567,6 @@ func Replace(args []string) {
 				break
 			}
 			view.Relocate()
-			if view.Buf.Settings["syntax"].(bool) {
-				view.matches = Match(view)
-			}
 			RedrawAll()
 			choice, canceled := messenger.YesNoPrompt("Perform replacement? (y,n)")
 			if canceled {
@@ -306,8 +576,7 @@ func Replace(args []string) {
 				}
 				messenger.Reset()
 				break
-			}
-			if choice {
+			} else if choice {
 				view.Cursor.DeleteSelection()
 				view.Buf.Insert(view.Cursor.Loc, replace)
 				view.Cursor.ResetSelection()
@@ -318,28 +587,6 @@ func Replace(args []string) {
 					searchStart = ToCharPos(view.Cursor.CurSelection[1], view.Buf)
 				} else {
 					searchStart = ToCharPos(view.Cursor.Loc, view.Buf)
-				}
-				continue
-			}
-		}
-	} else {
-		matches := regex.FindAllStringIndex(view.Buf.String(), -1)
-		if matches != nil && len(matches) > 0 {
-			adjust := 0
-			prevMatch := matches[0]
-			from := FromCharPos(prevMatch[0], view.Buf)
-			to := from.Move(Count(search), view.Buf)
-			adjust += Count(replace) - Count(search)
-			view.Buf.Replace(from, to, replace)
-			if len(matches) > 1 {
-				for _, match := range matches[1:] {
-					found++
-					from = from.Move(match[0]-prevMatch[0]+adjust, view.Buf)
-					to := from.Move(Count(search), view.Buf)
-					// TermMessage(match[0], " ", prevMatch[0], " ", adjust, "\n", from, " ", to)
-					view.Buf.Replace(from, to, replace)
-					prevMatch = match
-					// adjust += Count(replace) - Count(search)
 				}
 			}
 		}
@@ -353,6 +600,12 @@ func Replace(args []string) {
 	} else {
 		messenger.Message("Nothing matched ", search)
 	}
+}
+
+// ReplaceAll replaces search term all at once
+func ReplaceAll(args []string) {
+	// aliased to Replace command
+	Replace(append(args, "-a"))
 }
 
 // RunShellCommand executes a shell command and returns the output/error

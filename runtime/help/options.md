@@ -28,6 +28,14 @@ Here are the options that you can set:
 
 	default value: `0`
 
+* `eofnewline`: micro will automatically add a newline to the file.
+
+	default value: `false`
+
+* `rmtrailingws`: micro will automatically trim trailing whitespaces at eol.
+
+	default value: `false`
+
 * `tabsize`: sets the tab size to `option`
 
 	default value: `4`
@@ -56,6 +64,11 @@ Here are the options that you can set:
 * `tabstospaces`: use spaces instead of tabs
 
 	default value: `off`
+
+* `tabmovement`: navigate spaces at the beginning of lines as if they are tabs (e.g. move over 4 spaces at once).
+   This option only does anything if `tabstospaces` is on.
+
+    default value: `off`
 
 * `autoindent`: when creating a new line use the same indentation as the 
    previous line
@@ -93,24 +106,70 @@ Here are the options that you can set:
 
 	default value: `2`
 
+* `softwrap`: should micro wrap lines that are too long to fit on the screen
+
+	default value: `off`
+
+* `splitRight`: when a vertical split is created, should it be created to the right of
+   the current split?
+
+	default value: `on`
+
+* `splitBottom`: when a horizontal split is created, should it be created below the
+   current split?
+
+	default value: `on`
+
+* `autosave`: micro will save the buffer every 8 seconds automatically.
+   Micro also will automatically save and quit when you exit without asking.
+   Be careful when using this feature, because you might accidentally save a file,
+   overwriting what was there before.
+
+	default value: `off`
+
+* `pluginchannels`: contains all the channels micro's plugin manager will search
+   for plugins in. A channel is simply a list of 'repository' json files which contain
+   metadata about the given plugin. See the `Plugin Manager` section of the `plugins` help topic
+   for more information.
+
+	default value: `https://github.com/micro-editor/plugin-channel`
+
+* `pluginrepos`: contains all the 'repositories' micro's plugin manager will search for
+   plugins in. A repository consists of a `repo.json` file which contains metadata for a
+   single plugin.
+
+	default value: ` `
+
+* `useprimary` (only useful on Linux): defines whether or not micro will use the primary clipboard to copy selections
+   in the background. This does not affect the normal clipboard using Ctrl-C and Ctrl-V.
+
+	default value: `on`
+
+* `keepautoindent`: when using autoindent, whitespace is added for you. This option determines if
+   when you move to the next line without any insertions the whitespace that was added should be deleted.
+   By default the autoindent whitespace is deleted if the line was left empty.
+
+    default value: `off`
+
+* `termtitle`: defines whether or not your terminal's title will be set by micro when opened.
+
+    default value: `off`
+
 ---
 
 Default plugin options:
-
-* `linter`: lint languages on save (supported languages are C, D, Go, Java,
-   Javascript, Lua). Provided by the `linter` plugin.
-
-	default value: `on`
 
 * `autoclose`: Automatically close `{}` `()` `[]` `""` `''`. Provided by the `autoclose` plugin
 
 	default value: `on`
 
-* `goimports`: Run goimports on save. Provided by the `go` plugin.
+* `linter`: Automatically lint when the file is saved. Provided by the `linter` plugin
 
-	default value: `off`
+	default value: `on`
 
-* `gofmt`: Run gofmt on save. Provided by the `go` plugin.
+* `ftoptions`: by default, micro will set some options based on the filetype. At the moment, micro will
+   use tabs for makefiles and spaces for python files regardless of your settings. If you would like to
+   disable this behavior turn this option off.
 
 	default value: `on`
 

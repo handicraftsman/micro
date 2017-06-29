@@ -84,7 +84,8 @@ func CommandComplete(input string) (string, []string) {
 func HelpComplete(input string) (string, []string) {
 	var suggestions []string
 
-	for topic, _ := range helpPages {
+	for _, file := range ListRuntimeFiles(RTHelp) {
+		topic := file.Name()
 		if strings.HasPrefix(topic, input) {
 			suggestions = append(suggestions, topic)
 		}
@@ -94,6 +95,25 @@ func HelpComplete(input string) (string, []string) {
 	if len(suggestions) == 1 {
 		chosen = suggestions[0]
 	}
+	return chosen, suggestions
+}
+
+// ColorschemeComplete tab-completes names of colorschemes.
+func ColorschemeComplete(input string) (string, []string) {
+	var suggestions []string
+	files := ListRuntimeFiles(RTColorscheme)
+
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), input) {
+			suggestions = append(suggestions, f.Name())
+		}
+	}
+
+	var chosen string
+	if len(suggestions) == 1 {
+		chosen = suggestions[0]
+	}
+
 	return chosen, suggestions
 }
 
@@ -128,7 +148,7 @@ func OptionComplete(input string) (string, []string) {
 	return chosen, suggestions
 }
 
-// MakeCompletion registeres a function from a plugin for autocomplete commands
+// MakeCompletion registers a function from a plugin for autocomplete commands
 func MakeCompletion(function string) Completion {
 	pluginCompletions = append(pluginCompletions, LuaFunctionComplete(function))
 	return Completion(-len(pluginCompletions))
@@ -147,4 +167,30 @@ func PluginComplete(complete Completion, input string) (chosen string, suggestio
 		chosen = suggestions[0]
 	}
 	return
+}
+
+func PluginCmdComplete(input string) (chosen string, suggestions []string) {
+	for _, cmd := range []string{"install", "remove", "search", "update", "list"} {
+		if strings.HasPrefix(cmd, input) {
+			suggestions = append(suggestions, cmd)
+		}
+	}
+
+	if len(suggestions) == 1 {
+		chosen = suggestions[0]
+	}
+	return chosen, suggestions
+}
+
+func PluginNameComplete(input string) (chosen string, suggestions []string) {
+	for _, pp := range GetAllPluginPackages() {
+		if strings.HasPrefix(pp.Name, input) {
+			suggestions = append(suggestions, pp.Name)
+		}
+	}
+
+	if len(suggestions) == 1 {
+		chosen = suggestions[0]
+	}
+	return chosen, suggestions
 }
